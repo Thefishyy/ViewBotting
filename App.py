@@ -26,18 +26,26 @@ st.title("🌐 Live-Scraping Proxy Traffic Control")
 st.markdown("This dashboard automatically scrapes fresh, active public HTTP proxies from open mirrors right before executing requests.")
 st.divider()
 
-# Helper function to scrape live public proxies
+# MULTI-SOURCE FALLBACK ENGINE: Tries multiple distinct URLs if one fails
 def fetch_fresh_proxies():
-    url = "https://githubusercontent.com"
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            raw_proxies = [line.strip() for line in response.text.splitlines() if line.strip()]
-            return raw_proxies
-        else:
-            return []
-    except Exception:
-        return []
+    sources = [
+        "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+        "https://api.proxyscrape.com/?request=displayproxies&proxytype=http",
+        "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+        "https://api.openproxylist.xyz/http.txt"
+    ]
+    
+    for url in sources:
+        try:
+            # Short timeout per source to keep the UI snappy
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200 and len(response.text.strip()) > 50:
+                raw_proxies = [line.strip() for line in response.text.splitlines() if line.strip()]
+                if raw_proxies:
+                    return raw_proxies
+        except Exception:
+            continue # Try next url source if current fails
+    return []
 
 # Sidebar configuration matrix
 with st.sidebar:
@@ -74,7 +82,7 @@ if launch_btn:
             min_duration, max_duration = max_duration, min_duration
 
         log_messages = ["[System initialization started...]"]
-        log_messages.append("[Fetching fresh live proxies from open-source repository mirrors...]")
+        log_messages.append("[Scraping live proxies using redundant endpoint arrays...]")
         log_box.code("\n".join(log_messages), language="text")
         metric_status.metric("System Condition", "Scraping Proxies...", delta="Active")
 
@@ -97,8 +105,8 @@ if launch_btn:
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         
-        # TIMEOUT GUARD: Force the headless browser to give up quickly if a proxy is broken
-        chrome_options.page_load_strategy = 'eager' # Don't wait for images/scripts to load fully
+        # TIMEOUT GUARD
+        chrome_options.page_load_strategy = 'eager'
 
         try:
             driver_path = ChromeDriverManager().install()
@@ -113,10 +121,8 @@ if launch_btn:
         # Automation Routine Iteration
         i = 1
         while successful_deployments < total_runs:
-            # Pick a proxy randomly from the freshly generated pool
             current_proxy = random.choice(proxy_list)
             
-            # Recreate unique cleaner arguments per execution thread loop
             loop_options = Options()
             for arg in chrome_options.arguments:
                 loop_options.add_argument(arg)
@@ -132,12 +138,9 @@ if launch_btn:
             driver = None
             try:
                 driver = webdriver.Chrome(service=Service(driver_path), options=loop_options)
-                
-                # TIMEOUT GUARD: Strict limit on how long a proxy has to connect (12 seconds)
                 driver.set_page_load_timeout(12) 
                 driver.get(url)
                 
-                # If we get past driver.get(), the proxy successfully connected!
                 lifetime = random.randint(min_duration, max_duration)
                 accumulated_seconds += lifetime
                 successful_deployments += 1
@@ -151,7 +154,6 @@ if launch_btn:
                 log_messages.append(f"   -> [{time.strftime('%X')}] 🔴 Session complete.")
                 
             except Exception as e:
-                # If the proxy is dead, we drop it instantly instead of hanging
                 log_messages.append(f"   -> ⚠️ Proxy timed out, dead, or blocked. Skipping instantly...")
             finally:
                 if driver:
@@ -160,18 +162,15 @@ if launch_btn:
                     except Exception:
                         pass
             
-            # Update Progress bar based on actual successful counts
             progress_bar.progress(float(successful_deployments / total_runs))
             log_box.code("\n".join(log_messages), language="text")
 
-            # Small cooldown if we haven't reached our total goal yet
             if successful_deployments < total_runs:
-                interval_sleep = random.randint(2, 5) # Shorter sleep to cycle past bad proxies faster
+                interval_sleep = random.randint(2, 5)
                 time.sleep(interval_sleep)
             
             i += 1
             
-            # Absolute failsafe break so it doesn't loop forever if internet cuts out completely
             if i > (total_runs * 10):
                 log_messages.append("\n⚠️ Loop halted safely: Too many dead proxies encountered consecutively.")
                 log_box.code("\n".join(log_messages), language="text")
