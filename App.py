@@ -28,12 +28,10 @@ st.divider()
 
 # Helper function to scrape live public proxies
 def fetch_fresh_proxies():
-    # URL pointing directly to verified plain text HTTP lists updated continuously
-    url = "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt"
+    url = "https://githubusercontent.com"
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            # Parse text into clean list elements while filtering out blank lines
             raw_proxies = [line.strip() for line in response.text.splitlines() if line.strip()]
             return raw_proxies
         else:
@@ -98,6 +96,9 @@ if launch_btn:
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
+        
+        # TIMEOUT GUARD: Force the headless browser to give up quickly if a proxy is broken
+        chrome_options.page_load_strategy = 'eager' # Don't wait for images/scripts to load fully
 
         try:
             driver_path = ChromeDriverManager().install()
@@ -110,7 +111,8 @@ if launch_btn:
         successful_deployments = 0
 
         # Automation Routine Iteration
-        for i in range(1, total_runs + 1):
+        i = 1
+        while successful_deployments < total_runs:
             # Pick a proxy randomly from the freshly generated pool
             current_proxy = random.choice(proxy_list)
             
@@ -120,40 +122,60 @@ if launch_btn:
                 loop_options.add_argument(arg)
             loop_options.add_argument(f"--proxy-server={current_proxy}")
             
-            metric_workers.metric("Active Progress", f"{i} / {total_runs}", f"+1 Worker")
-            metric_status.metric("System Condition", f"Running Worker {i}", delta="Processing")
+            metric_workers.metric("Active Progress", f"{successful_deployments} / {total_runs}", f"Worker Run #{i}")
+            metric_status.metric("System Condition", f"Trying Worker {successful_deployments + 1}", delta="Processing")
             
-            msg = f"[{time.strftime('%X')}] 🟢 Launching headless worker {i}/{total_runs} via proxy {current_proxy}"
+            msg = f"[{time.strftime('%X')}] 🟢 Launching worker via proxy {current_proxy}"
             log_messages.append(msg)
             log_box.code("\n".join(log_messages), language="text")
 
+            driver = None
             try:
                 driver = webdriver.Chrome(service=Service(driver_path), options=loop_options)
+                
+                # TIMEOUT GUARD: Strict limit on how long a proxy has to connect (12 seconds)
+                driver.set_page_load_timeout(12) 
                 driver.get(url)
                 
+                # If we get past driver.get(), the proxy successfully connected!
                 lifetime = random.randint(min_duration, max_duration)
                 accumulated_seconds += lifetime
                 successful_deployments += 1
                 
                 metric_time.metric("Total Engagement Time", f"{accumulated_seconds}s", f"~{int(accumulated_seconds/successful_deployments)}s avg")
                 
-                log_messages.append(f"   -> Connected. Retaining viewport session runtime for {lifetime} seconds...")
+                log_messages.append(f"   -> Connected! Success count: {successful_deployments}/{total_runs}. Keeping session active for {lifetime}s...")
                 log_box.code("\n".join(log_messages), language="text")
                 
                 time.sleep(lifetime)
-                driver.quit()
-                log_messages.append(f"   -> [{time.strftime('%X')}] 🔴 Connection terminated safely.")
+                log_messages.append(f"   -> [{time.strftime('%X')}] 🔴 Session complete.")
+                
             except Exception as e:
-                log_messages.append(f"   -> ⚠️ Worker connection timed out or failed proxy check: {str(e)[:50]}")
+                # If the proxy is dead, we drop it instantly instead of hanging
+                log_messages.append(f"   -> ⚠️ Proxy timed out, dead, or blocked. Skipping instantly...")
+            finally:
+                if driver:
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
             
-            progress_bar.progress(float(i / total_runs))
+            # Update Progress bar based on actual successful counts
+            progress_bar.progress(float(successful_deployments / total_runs))
             log_box.code("\n".join(log_messages), language="text")
 
-            if i < total_runs:
-                interval_sleep = random.randint(min_duration, max_duration)
-                log_messages.append(f"[{time.strftime('%X')}] Cooling down for {interval_sleep}s before spawning next session instance...\n")
-                log_box.code("\n".join(log_messages), language="text")
+            # Small cooldown if we haven't reached our total goal yet
+            if successful_deployments < total_runs:
+                interval_sleep = random.randint(2, 5) # Shorter sleep to cycle past bad proxies faster
                 time.sleep(interval_sleep)
+            
+            i += 1
+            
+            # Absolute failsafe break so it doesn't loop forever if internet cuts out completely
+            if i > (total_runs * 10):
+                log_messages.append("\n⚠️ Loop halted safely: Too many dead proxies encountered consecutively.")
+                log_box.code("\n".join(log_messages), language="text")
+                break
 
         st.success("🎉 Automation campaign successfully finished!")
         metric_status.metric("System Condition", "Finished", delta="Idle", delta_color="off")
