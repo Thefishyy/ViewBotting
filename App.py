@@ -27,25 +27,42 @@ st.markdown("This dashboard automatically scrapes fresh, active public HTTP prox
 st.divider()
 
 # MULTI-SOURCE FALLBACK ENGINE: Tries multiple distinct URLs if one fails
+# CLEANING ENGINE: Grabs proxies and completely strips away double ports/junk text
 def fetch_fresh_proxies():
     sources = [
-        "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-        "https://api.proxyscrape.com/?request=displayproxies&proxytype=http",
-        "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-        "https://api.openproxylist.xyz/http.txt"
+        "https://githubusercontent.com",
+        "https://proxyscrape.com",
+        "https://githubusercontent.com",
+        "https://openproxylist.xyz"
     ]
+    
+    cleaned_proxies = []
     
     for url in sources:
         try:
-            # Short timeout per source to keep the UI snappy
             response = requests.get(url, timeout=5)
             if response.status_code == 200 and len(response.text.strip()) > 50:
-                raw_proxies = [line.strip() for line in response.text.splitlines() if line.strip()]
-                if raw_proxies:
-                    return raw_proxies
+                for line in response.text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    # 1. Clean out text like "http" or "socks" if it's separated by a space or tab
+                    clean_line = line.split()[0] 
+                    
+                    # 2. Fix the double-port issue (e.g., if it reads 1.2.3.4:80:80 or 1.2.3.4:80:http)
+                    parts = clean_line.split(':')
+                    if len(parts) >= 2:
+                        ip = parts[0]
+                        port = parts[1] # Grabs ONLY the first port number
+                        cleaned_proxies.append(f"{ip}:{port}")
+                        
+                if cleaned_proxies:
+                    return cleaned_proxies
         except Exception:
-            continue # Try next url source if current fails
+            continue
     return []
+
 
 # Sidebar configuration matrix
 with st.sidebar:
